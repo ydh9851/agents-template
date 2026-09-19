@@ -1,0 +1,22 @@
+# ---------- Web 服务 ----------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sse-starlette==2.2.1
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+
+# ---------- 多 Agent 编排 / LLM ----------
+langgraph==0.2.60
+langgraph-checkpoint-sqlite>=2.0.0,<3.0.0
+langchain==0.3.14
+langchain-core==0.3.29
+langchain-openai==0.2.14
+langchain-text-splitters==0.3.5
+
+# ---------- 混合检索 RAG ----------
+# chromadb 0.5.x 在 Windows + Python 3.12 上需要本地编译 chroma-hnswlib（缺 MSVC 会失败），
+# 1.x 提供预编译 wheel，本项目两代版本都已适配。
+chromadb>=0.5.23
+rank-bm25==0.2.2
+numpy==1.26.4

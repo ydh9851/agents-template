@@ -1,0 +1,44 @@
+# ---------- 密钥 / 环境（最重要：绝不能提交真实 Key） ----------
+.env
+.env.*
+!.env.example
+*.env.bak
+*.pem
+*.key
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------- 运行时产物（索引 / 向量库 / checkpoint / 工作区） ----------
+data/index/
+data/chroma/
+data/workspace/
+data/*.sqlite
+data/*.sqlite3
+data/*.sqlite-journal
+data/*.db
+
+# ---------- 编辑器 / 系统 ----------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 日志 ----------
+*.log

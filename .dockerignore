@@ -1,0 +1,22 @@
+# 绝不把密钥打进镜像
+.env
+.env.*
+!.env.example
+
+# 运行时产物
+data/index/
+data/chroma/
+data/*.sqlite
+data/*.sqlite-journal
+
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# 版本控制
+.git/
+.gitignore

@@ -1,0 +1,25 @@
+services:
+  agents-api:
+    build: .
+    image: agents-template:1.0.0
+    container_name: agents-template
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 容器内统一使用容器内路径，覆盖 .env 里的本地路径
+      DOCS_DIR: /app/data/docs
+      SQLITE_PATH: /app/data/checkpoint.sqlite
+      CHROMA_DIR: /app/data/chroma
+      INDEX_DIR: /app/data/index
+    ports:
+      - "8000:8000"
+    volumes:
+      # 只挂载 data，checkpoint 与索引在容器重建后依然保留
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s

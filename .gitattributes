@@ -1,0 +1,12 @@
+# 统一换行符：仓库内一律 LF，避免 Windows / Linux 协作时整文件 diff
+* text=auto eol=lf
+
+# 这些文件不做换行转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.sqlite binary
+*.sqlite3 binary
+
+# GitHub 语言统计：把语料和 Notebook 排除掉
+data/docs/* linguist-documentation
