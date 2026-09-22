@@ -1,9 +1,22 @@
-"""Worker Agent：执行当前子任务，需要查资料时调混合检索 RAG。"""
+"""Worker Agent：按「依赖就绪集」并行执行子任务，需要资料时调混合检索 RAG。
+
+与旧版的区别：
+    旧版靠 `current_index` 线性推进，一次只做一个子任务；
+    现在谁该执行由 graph/scheduler.py 根据依赖现算，一次把**整层就绪任务**取出来并行做。
+    三个互不依赖的子任务从「串行 3 轮」变成「并行 1 轮」。
+"""
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+
+from agents.loop import run_with_tools
 from app.config import settings
-from app.llm import chat
+from app.llm import LLMUnavailable, TokenBudgetExceeded, chat
 from app.prompts import load_prompt
-from app.utils import get_logger, render
-from graph.state import AgentState, append_log, failed_deps
+from app.tools import tools_enabled
+from app.utils import get_logger
+from graph.scheduler import schedule
+from graph.state import AgentState, PendingResult, append_log, failed_deps
 
 logger = get_logger("agent.worker")
 
@@ -56,45 +69,71 @@ def _format_deps(state: AgentState, subtask: dict) -> str:
     return "\n".join(blocks)
 
 
-def worker_node(state: AgentState) -> dict:
-    """执行当前子任务，产出写回 current_result。"""
-    index = int(state.get("current_index", 0))
-    subtasks = state.get("subtasks") or []
-    if index >= len(subtasks):
-        # 理论上不会走到这里，做个兜底避免整图崩溃
-        return {"current_result": "", "logs": append_log(state, "[Worker] 无待执行子任务，跳过")}
+def _last_rejection(state: AgentState, subtask_id: str) -> str:
+    """取该子任务上一次被打回的理由。
 
-    subtask = subtasks[index]
+    这是「带意见打回重做」真正生效的地方。旧版想从 results 里找理由，
+    但被打回的子任务根本不会写进 results（只有验收完的才入库），
+    所以那段逻辑实际上从来没拿到过任何理由 —— 打回重做退化成「原样再做一遍」。
+    """
+    return str((state.get("last_rejection") or {}).get(subtask_id, ""))
+
+
+def _is_code_task(subtask: dict) -> bool:
+    """是否走编码链路。三个条件缺一不可：
+
+      1. Manager 标了 needs_code
+      2. 代码执行没被配置关掉（CODE_EXECUTION_ENABLED）
+      3. 不是 Mock 模式 —— MockLLM 既不支持 function calling，也写不出真代码
+    """
+    return bool(
+        subtask.get("needs_code")
+        and settings.code_execution_enabled
+        and not settings.use_mock
+    )
+
+
+def _run_code_subtask(subtask: dict, context: str) -> tuple[str, list[str]]:
+    """代码子任务：Tester 先出题，Coder 再实现并跑到测试通过。
+
+    顺序是刻意的（先出题、后实现）：
+        如果先有实现，测试会不自觉地照着实现已有的边界去写 ——
+        「实现怎么跑，测试就怎么测」，等于没测。
+    这正是 Coder / Tester 必须分成两个角色的全部理由。
+    """
+    from agents.coder import implement
+    from agents.tester import write_tests
+
+    test_text, test_files = write_tests(subtask, context)
+    logger.info("子任务 %s 走编码链路：Tester 产出 %d 个测试文件", subtask["id"], len(test_files))
+
+    impl_text, artifacts = implement(subtask, context, test_text)
+
+    output = (
+        f"{impl_text}\n\n"
+        f"——\n"
+        f"【Tester 独立编写的测试】\n{test_text or '（Tester 未产出测试）'}\n"
+        f"【测试文件】{', '.join(test_files) or '（无）'}"
+    )
+    # 测试文件也是交付物：Checker 要能看到它，否则没法判断「到底测了什么」
+    merged = list(dict.fromkeys([*artifacts, *test_files]))
+    return output, merged
+
+
+def _run_subtask(state: AgentState, subtask: dict) -> PendingResult:
+    """执行单个子任务。
+
+    刻意写成「只读 state」的形式：并行执行时多个子任务共享同一个 state，
+    只要不往里写就不会互相干扰（写入统一由 worker_node 汇总）。
+    """
     retry_count = int((state.get("retries") or {}).get(subtask["id"], 0))
-    logger.info("Worker 执行子任务 %s（第 %d 次尝试）", subtask["id"], retry_count + 1)
 
-    # 前置依赖没通过验收时直接短路，不调用模型（输入不会变，重试只会重复输出「无法完成」）
-    blocked = failed_deps(state, subtask)
-    if blocked:
-        logger.warning("子任务 %s 的依赖 %s 未通过，跳过执行", subtask["id"], blocked)
-        return {
-            "current_result": (
-                f"【阻塞】依赖子任务 {', '.join(blocked)} 未通过验收，缺少可用的输入依据，"
-                f"本子任务不执行，以免编造内容。"
-            ),
-            "logs": append_log(
-                state, f"[Worker] 子任务 {subtask['id']} 因依赖 {', '.join(blocked)} 失败而跳过执行"
-            ),
-        }
-
-    # 需要资料就去调 RAG；上一轮被 Checker 打回时，把打回意见一起喂回去
     hits: list[dict] = []
     if subtask.get("need_rag", True):
         query = f"{subtask.get('title', '')} {subtask.get('description', '')}"
         hits = retrieve_context(query)
 
-    last_reason = ""
-    if retry_count > 0:
-        for item in reversed(state.get("results") or []):
-            if item.get("id") == subtask["id"]:
-                last_reason = str(item.get("reason", ""))
-                break
-
+    context = _format_context(hits)
     user_prompt = (
         f"【当前子任务】\n"
         f"id：{subtask['id']}\n"
@@ -102,16 +141,113 @@ def worker_node(state: AgentState) -> dict:
         f"描述：{subtask['description']}\n"
         f"验收标准：{subtask['acceptance']}\n\n"
         f"【依赖子任务的已完成结果】\n{_format_deps(state, subtask)}\n\n"
-        f"【上一轮验收意见】\n{last_reason or '（首次执行）'}\n\n"
-        f"【检索资料】\n{_format_context(hits)}\n\n"
+        f"【上一轮验收意见】\n{_last_rejection(state, subtask['id']) or '（首次执行）'}\n\n"
+        f"【检索资料】\n{context}\n\n"
         f"请完成该子任务。"
     )
-    result = chat(load_prompt("worker"), user_prompt)
 
-    log = f"[Worker] 完成子任务 {subtask['id']}（{subtask['title']}）"
-    if hits:
-        log += f"，引用 {len(hits)} 条检索片段"
+    system_prompt = load_prompt("worker")
+    artifacts: list[str] = []
+    try:
+        if _is_code_task(subtask):
+            # 代码子任务：Tester 先出题 → Coder 实现并跑到测试通过
+            output, artifacts = _run_code_subtask(subtask, context)
+        elif tools_enabled() and not settings.use_mock:
+            # 普通子任务：走 ReAct 循环，允许它读工作区、把成品写进去
+            output, artifacts = run_with_tools(
+                system_prompt, user_prompt, tag=f"worker/{subtask['id']}",
+            )
+        else:
+            # Mock 模式刻意不走工具这条路 —— MockLLM 不支持 function calling，
+            # 强行走只会让离线链路和 CI 变得不稳定
+            output = chat(system_prompt, user_prompt)
+    except (TokenBudgetExceeded, LLMUnavailable) as exc:
+        # 模型彻底不可用时不抛异常打断整图：产出一段明确的「未执行」说明，
+        # 让 Checker 判它未通过、流程继续往下走，最终 status=partial 如实反映结果。
+        logger.warning("子任务 %s 未能执行：%s", subtask["id"], exc)
+        output = f"【未执行】{exc}"
+
+    detail = f"，引用 {len(hits)} 条检索片段" if hits else ""
+    if artifacts:
+        detail += f"，产出 {len(artifacts)} 个文件（{', '.join(artifacts)}）"
+    logger.info("子任务 %s 完成（第 %d 次尝试）%s", subtask["id"], retry_count + 1, detail)
+
     return {
-        "current_result": result,
-        "logs": append_log(state, log),
+        "id": subtask["id"],
+        "title": subtask.get("title", ""),
+        "output": output,
+        "artifacts": artifacts,
+    }
+
+
+def _mark_blocked(state: AgentState) -> dict:
+    """剩余子任务全被失败的依赖堵死：一次性标记为未通过，避免整图空转。"""
+    results = list(state.get("results") or [])
+    done = {item.get("id") for item in results}
+    marked: list[str] = []
+
+    for sub in state.get("subtasks") or []:
+        sub_id = sub.get("id")
+        if sub_id in done:
+            continue
+        failed = failed_deps(state, sub)
+        results.append(
+            {
+                "id": sub_id,
+                "title": sub.get("title", ""),
+                "output": "",
+                "passed": False,
+                "reason": (
+                    f"依赖子任务未通过验收（{', '.join(failed)}），缺少有效输入，未执行。"
+                    if failed
+                    else "所在依赖链已中断，未执行。"
+                ),
+                "attempts": 0,
+                "artifacts": [],
+            }
+        )
+        marked.append(str(sub_id))
+
+    logger.warning("剩余 %d 个子任务因依赖失败被跳过：%s", len(marked), marked)
+    return {
+        "results": results,
+        "pending_results": [],
+        "current_result": "",
+        "logs": append_log(state, f"[Worker] 子任务 {', '.join(marked)} 因依赖失败跳过执行"),
+    }
+
+
+def worker_node(state: AgentState) -> dict:
+    """执行当前所有就绪子任务（同层并行）。"""
+    plan = schedule(state)
+
+    if plan.action == "idle":
+        return {
+            "pending_results": [],
+            "current_result": "",
+            "logs": append_log(state, "[Worker] 没有待执行的子任务，跳过"),
+        }
+    if plan.action == "blocked":
+        return _mark_blocked(state)
+
+    subtasks = state.get("subtasks") or []
+    batch = [subtasks[index] for index in plan.ready]
+
+    if len(batch) == 1:
+        pending = [_run_subtask(state, batch[0])]
+    else:
+        workers = max(1, min(len(batch), int(settings.max_parallel_subtasks)))
+        logger.info("本轮 %d 个子任务就绪，并行执行（并发上限 %d）", len(batch), workers)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            # pool.map 保持输入顺序，产出顺序与 batch 一致，便于日志与结果对齐
+            pending = list(pool.map(lambda sub: _run_subtask(state, sub), batch))
+
+    return {
+        "pending_results": pending,
+        "current_result": "\n\n".join(str(item.get("output", "")) for item in pending),
+        "logs": append_log(
+            state,
+            f"[Worker] 完成子任务 {', '.join(str(item.get('id')) for item in pending)}"
+            f"（本轮 {len(pending)} 个）",
+        ),
     }

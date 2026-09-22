@@ -1,26 +1,12 @@
 """通用小工具：日志、模板渲染、从模型输出里稳健地抽取 JSON。"""
 import json
-import logging
 import re
-import sys
 from string import Template
 from typing import Any
 
+from app.observability import get_logger
+
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
-
-
-def get_logger(name: str = "agents") -> logging.Logger:
-    logger = logging.getLogger(name)
-    if not logger.handlers:
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s | %(levelname)-7s | %(name)s | %(message)s")
-        )
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
-    return logger
-
 
 logger = get_logger()
 

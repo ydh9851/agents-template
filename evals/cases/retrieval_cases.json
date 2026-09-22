@@ -1,0 +1,27 @@
+{
+  "version": "1.0",
+  "description": "混合检索质量评估：口语化提问 -> 期望命中的文档。标注到「文档级」而不是 chunk 级，这样调整切分参数不会让标注集失效。",
+  "k_max": 5,
+  "cases": [
+    {"id": "r1", "query": "这个框架到底是干什么的", "expected": ["01-overview.md"]},
+    {"id": "r2", "query": "整个流程的状态机是怎么串起来的", "expected": ["02-langgraph.md"]},
+    {"id": "r3", "query": "是谁负责把大任务拆小的", "expected": ["03-manager.md"]},
+    {"id": "r4", "query": "子任务具体由谁来干活", "expected": ["04-worker.md"]},
+    {"id": "r5", "query": "怎么判断做出来的东西合格", "expected": ["05-checker.md"]},
+    {"id": "r6", "query": "关键词匹配那一路用的什么算法", "expected": ["06-rag-bm25.md"]},
+    {"id": "r7", "query": "语义向量模型应该怎么挑选", "expected": ["07-rag-vector.md"]},
+    {"id": "r8", "query": "两路检索结果怎么合并到一起", "expected": ["08-rrf.md"]},
+    {"id": "r9", "query": "长文档太长了一次塞不进去怎么办", "expected": ["09-chunking.md"]},
+    {"id": "r10", "query": "程序中途崩了任务还能接着跑吗", "expected": ["10-checkpoint.md"]},
+    {"id": "r11", "query": "怎么让前端实时看到执行进度", "expected": ["11-sse.md"]},
+    {"id": "r12", "query": "怎么把它跑在容器里", "expected": ["12-deploy.md"]},
+    {"id": "r13", "query": "有哪些参数需要在配置文件里改", "expected": ["13-env.md"]},
+    {"id": "r14", "query": "大模型的密钥填在哪里", "expected": ["14-deepseek.md"]},
+    {"id": "r15", "query": "一次执行失败之后会自动再试吗", "expected": ["15-retry.md"]},
+    {"id": "r16", "query": "启动的时候报错该从哪查", "expected": ["16-faq-start.md"]},
+    {"id": "r17", "query": "搜出来的资料答非所问怎么调", "expected": ["17-faq-rag.md"]},
+    {"id": "r18", "query": "跑一个任务大概要花多少成本", "expected": ["18-faq-cost.md"]},
+    {"id": "r19", "query": "运行日志是怎么记录和输出的", "expected": ["19-observability.md"]},
+    {"id": "r20", "query": "接下来还准备做哪些功能", "expected": ["20-roadmap.md"]}
+  ]
+}

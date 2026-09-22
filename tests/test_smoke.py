@@ -18,23 +18,7 @@ from rag.hybrid_search import HybridRetriever
 from rag.loader import build_chunks, split_text
 
 
-@pytest.fixture
-def isolated(monkeypatch, tmp_path):
-    """把运行时产物全部指向临时目录，并强制 Mock 模式，保证测试互不干扰。"""
-    from rag.hybrid_search import reset_retriever
-    from rag.store import reset_vector_store
-
-    monkeypatch.setattr(settings, "mock_llm", True)
-    monkeypatch.setattr(settings, "mock_checker_fail_times", 0)
-    monkeypatch.setattr(settings, "sqlite_path", str(tmp_path / "checkpoint.sqlite"))
-    monkeypatch.setattr(settings, "chroma_dir", str(tmp_path / "chroma"))
-    monkeypatch.setattr(settings, "index_dir", str(tmp_path / "index"))
-
-    reset_vector_store()
-    reset_retriever()
-    yield
-    reset_vector_store()
-    reset_retriever()
+# 注：`isolated` fixture 已提到 conftest.py，供所有测试文件共用
 
 
 # ---------------------------------------------------------------- 工具函数
@@ -178,8 +162,9 @@ def test_dependency_failure_short_circuits_downstream(isolated, monkeypatch):
     # t1 走正常重试：1 次原始 + max_retry_per_subtask 次重试
     assert results["t1"]["attempts"] == settings.max_retry_per_subtask + 1
     assert results["t1"]["passed"] is False
-    # t2 / t3 依赖 t1，应被短路，只记 1 次尝试
-    assert results["t2"]["attempts"] == 1
+    # t2 / t3 依赖 t1，应在调度阶段就被短路：它们从未被执行过，所以 attempts 记 0
+    # （旧版靠 current_index 线性推进，必须走到 Checker 才发现依赖失败，所以那时记的是 1）
+    assert results["t2"]["attempts"] == 0
     assert "依赖子任务未通过" in results["t2"]["reason"]
     assert any("因依赖" in line and "跳过" in line for line in state["logs"])
 

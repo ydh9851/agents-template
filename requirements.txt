@@ -20,3 +20,9 @@ langchain-text-splitters==0.3.5
 chromadb>=0.5.23
 rank-bm25==0.2.2
 numpy==1.26.4
+
+# ---------- 可选依赖（默认不装也能跑完整链路）----------
+# 默认配置下这些都是关的：重排用零依赖启发式、限流用进程内存、向量用本地哈希。
+# 需要哪一档再单独装，不要为了「功能全」把安装体积堆到几个 GB：
+#   pip install sentence-transformers   -> RERANK_PROVIDER=cross_encoder（连带 torch，约 2GB）
+#   pip install redis                   -> RATE_LIMIT_BACKEND=redis（多副本共享限流配额）

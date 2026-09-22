@@ -9,6 +9,7 @@ from typing import Any
 from app.config import settings
 from app.utils import get_logger
 from rag.embedding import get_embedder, tokenize
+from rag.rerank import get_reranker
 from rag.store import get_vector_store
 
 logger = get_logger("rag.hybrid")
@@ -106,28 +107,32 @@ class HybridRetriever:
         return sorted(scores.items(), key=lambda pair: -pair[1])
 
     def search(self, query: str, top_k: int | None = None) -> list[dict]:
-        """混合检索入口，返回 top_k 个片段。"""
+        """混合检索入口：两路召回 → RRF 融合 → 重排 → 取 top_k。"""
         top_k = top_k or settings.rag_top_k
         query = (query or "").strip()
         if not query:
             return []
 
         # 两路各多召回一些，给 RRF 更大的融合空间
-        candidates = max(top_k * 3, 10)
-        bm25_hits = self._bm25_search(query, candidates)
-        vector_hits = self._vector_search(query, candidates)
+        candidate_k = max(top_k * 3, 10)
+        bm25_hits = self._bm25_search(query, candidate_k)
+        vector_hits = self._vector_search(query, candidate_k)
 
         pool: dict[str, dict] = {}
         for hit in bm25_hits + vector_hits:
             pool.setdefault(hit["id"], hit)
 
         fused = self.rrf_fuse([bm25_hits, vector_hits], k=settings.rrf_k)
-        results: list[dict] = []
-        for doc_id, score in fused[:top_k]:
+
+        # 先取一个比 top_k 更大的池，再交给重排层收敛到 top_k ——
+        # 重排的全部价值在于「在更大的候选集里重新判断」，池子只有 top_k 就没得排了
+        pool_size = max(top_k, int(settings.rerank_pool))
+        candidates: list[dict] = []
+        for doc_id, score in fused[:pool_size]:
             item = pool.get(doc_id)
             if not item:
                 continue
-            results.append(
+            candidates.append(
                 {
                     "id": doc_id,
                     "text": item["text"],
@@ -136,7 +141,8 @@ class HybridRetriever:
                     "score": round(score, 6),
                 }
             )
-        return results
+
+        return get_reranker().rerank(query, candidates, top_k)
 
     def stats(self) -> dict:
         return {

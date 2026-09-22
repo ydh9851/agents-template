@@ -36,10 +36,17 @@ jobs:
       - name: 运行测试
         run: pytest -v
 
-      - name: 冒烟：构建索引 + 跑通一个任务
-        run: |
-          python tools/ingest.py
-          python tools/run_task.py "CI 冒烟测试：验证最小链路"
+      - name: 构建 RAG 索引
+        run: python tools/ingest.py
+
+      # 离线评估：pytest 保证「功能不退化」，评估回答「输出好不好」。
+      # Mock 模式下 Checker 恒定放行，所以这里不跑 checker —— 它需要真实模型，
+      # 见 README 中「离线评估」一节的说明。
+      - name: 离线评估（拆解质量 + 检索质量 + 端到端）
+        run: python evals/run_eval.py --suite manager,retrieval,e2e --min-manager 0.8 --min-hit3 0.75 --min-finish-rate 0.8
+
+      - name: 冒烟：跑通一个任务
+        run: python tools/run_task.py "CI 冒烟测试：验证最小链路"
 
       - name: 打印索引状态（便于排查）
         run: python tools/ingest.py

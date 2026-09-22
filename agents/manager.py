@@ -47,6 +47,9 @@ def normalize_subtasks(raw_subtasks: object) -> list[dict]:
                 "deps": valid_deps,
                 "acceptance": _clean_text(item.get("acceptance"), "结果清晰、完整、可交付"),
                 "need_rag": bool(item.get("need_rag", True)),
+                # 代码类子任务会走「Tester 出题 → Coder 实现并跑到通过」的独立链路。
+                # 默认 false：绝大多数子任务是写作/汇总，不该被拉进编码链路白白多花几轮 token。
+                "needs_code": bool(item.get("needs_code", False)),
             }
         )
 
@@ -58,22 +61,33 @@ def normalize_subtasks(raw_subtasks: object) -> list[dict]:
     return cleaned
 
 
+def split_task(task: str) -> list[dict]:
+    """把用户任务拆成（清洗后的）子任务列表。
+
+    抽成独立函数是为了让离线评估（evals/run_eval.py）跑的就是**线上同一套
+    Prompt 与清洗逻辑** —— 评估脚本自己另拼一份平行实现的话，
+    测出来的分数代表不了线上行为，等于白测。
+    """
+    system_prompt = render(load_prompt("manager"), max_subtasks=settings.max_subtasks)
+    raw = chat(system_prompt, f"用户任务：\n{task}")
+    return normalize_subtasks(extract_json(raw).get("subtasks"))
+
+
 def manager_node(state: AgentState) -> dict:
     """入口节点：拆任务。"""
     task = state.get("task", "")
     logger.info("Manager 开始拆解任务：%s", task[:60])
 
-    system_prompt = render(load_prompt("manager"), max_subtasks=settings.max_subtasks)
-    raw = chat(system_prompt, f"用户任务：\n{task}")
-    subtasks = normalize_subtasks(extract_json(raw).get("subtasks"))
+    subtasks = split_task(task)
 
     titles = "、".join(sub["title"] for sub in subtasks)
     return {
         "subtasks": subtasks,
-        "current_index": 0,
-        "current_result": "",
+        "pending_results": [],
         "results": [],
         "retries": {},
+        "last_rejection": {},
+        "current_result": "",
         "final_answer": "",
         "status": "running",
         "logs": append_log(state, f"[Manager] 拆解出 {len(subtasks)} 个子任务：{titles}"),

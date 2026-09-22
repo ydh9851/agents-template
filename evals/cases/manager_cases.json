@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "description": "Manager 拆解质量评估：用规则检查拆解结果的结构合法性与覆盖度。used by evals/run_eval.py",
+  "cases": [
+    {
+      "id": "m1",
+      "task": "写一份校园二手交易平台的技术选型说明",
+      "min_subtasks": 2,
+      "max_subtasks": 5,
+      "must_cover": ["技术选型"],
+      "forbid_patterns": ["读取源码", "文件路径", "运行代码", "扫描仓库"]
+    },
+    {
+      "id": "m2",
+      "task": "给大一新生写一份时间管理建议",
+      "min_subtasks": 2,
+      "max_subtasks": 5,
+      "must_cover": ["时间管理"],
+      "forbid_patterns": ["读取源码", "文件路径", "运行代码", "扫描仓库"]
+    },
+    {
+      "id": "m3",
+      "task": "总结 RRF 融合在混合检索中的作用与代价",
+      "min_subtasks": 1,
+      "max_subtasks": 5,
+      "must_cover": ["RRF"],
+      "forbid_patterns": ["读取源码", "文件路径", "运行代码", "扫描仓库", "给出真实行号"]
+    },
+    {
+      "id": "m4",
+      "task": "给一个三人小组设计一周的协作排期",
+      "min_subtasks": 2,
+      "max_subtasks": 5,
+      "must_cover": ["协作"],
+      "forbid_patterns": ["读取源码", "文件路径", "运行代码", "扫描仓库"]
+    }
+  ]
+}
